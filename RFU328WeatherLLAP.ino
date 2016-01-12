@@ -431,23 +431,8 @@ void tempMessage(char * reply)
   //T=10.16;
   #endif
  
-  int strf_len = 3; 
-               //This is a fiddle to format temperature readings - 
-               //floats don't work with sprintf()
-  if (T < 0) { 
-    strf_len++;
-  }
-  if ((T<=-10) || (T>=10)) {
-    strf_len++;
-  }
-   
-  dtostrf(float(T),strf_len,1,temperature);
- 
-  // sprintf(temperature,"%.1f",t2);
   
-  strcpy(reply + cmdlen,temperature);
-  
-  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
+  formatFloat (cmdlen, float(T), reply);
   
 }
 
@@ -457,25 +442,8 @@ void humidityMessage(char * reply)
   Serial.println("DEBUG>> hunidityMessage()");
   #endif
   const int cmdlen = 3; // "HUM"
-  float h;
-  int strf_len = 3; 
-               //This is a fiddle to format temperature readings - 
-               //floats don't work with sprintf()
-  char humidity [LLAP_MESSAGE_SIZE]; // shrink this if memory is an issue
   
-  h = myHumidity.readHumidity(); // percent
-  
-  if (h < 10)  
-    strf_len--;
-  else 
-  if (h >=100) 
-    strf_len++; 
-   
-  dtostrf(h,strf_len,1,humidity);
-  
-  strcpy(reply + cmdlen,humidity);
-  
-  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string  
+  formatFloat (cmdlen, myHumidity.readHumidity(), reply);
 }
 
 void rain1hMessage(char * reply)
@@ -485,24 +453,11 @@ void rain1hMessage(char * reply)
   #endif
   const int cmdlen = 6; // "RAIN1H"
   float r1 = 0;
-  int strf_len = 3; 
-                
-  char rain1h [LLAP_MESSAGE_SIZE]; // shrink this if memory is an issue
-  
+   
   for (int i = 0 ; i < 60 ; i++)
        r1 += rainHour[i];
   
-  if (r1 < 10) 
-    strf_len--;
-  else if (r1 >=100) 
-    strf_len++; 
-  
-  dtostrf(r1,strf_len,1,rain1h);
-  
-  strcpy(reply + cmdlen,rain1h);
-  
-  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
-  
+  formatFloat (cmdlen, r1, reply);
 }
   
 void raintodayMessage(char * reply)
@@ -512,9 +467,8 @@ void raintodayMessage(char * reply)
   #endif
   
   const int cmdlen = 5; // "RAIND"
-  float rt = rain_today; // that's global - updated by interrupt
   
-  formatFloat (cmdlen, rt, reply);
+  formatFloat (cmdlen, rain_today, reply);
   // The output string should now be set up.  
 }
 
