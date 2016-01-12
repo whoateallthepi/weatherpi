@@ -1,19 +1,17 @@
-
-
 /*
  Weather Station using the RFU328
  By: Tom Cooper based on work by Nathan Seidle
  To Do: Code in the check for station id
  This version is reconfigged to use BMP180 pressure sensor
  This version is a major reworked to use LLAP comms protocol
- */
+*/
 //#define DEBUG
 //#define TRACE
-//#include <avr/wdt.h> //We need watch dog for this program
+#include <avr/wdt.h> //We need watch dog for this program
 //#include <SoftwareSerial.h> //Connection to Imp
 #include <string.h> 
 #include <Wire.h> //I2C needed for sensors
-#include <stdio.h> //or sprintf()
+//#include <stdio.h> //for sprintf()
 
 #include "HTU21D.h" //Humidity sensor
 #include <SFE_BMP180.h> //Pressure and temperature sensor
@@ -21,7 +19,7 @@
 #include <EEPROM.h>
 #include <LLAPSerial.h>
 
-#define VERSION "1.0------" //Extra chars are the LLAP filler
+#define VERSION "1.01-----" //Extra chars are the LLAP filler
 #define DEVICETYPE "WSTAT-----"
 #define DEVICEID1 '-'
 #define DEVICEID2 '-'
@@ -30,8 +28,8 @@
 #define LLAP_MESSAGE_SIZE 9 // This is the size of the message payload 9 see LLAP standard
 #define INITIAL "STARTED--"  //  First message on load
 #define LLAP_FILLER "---------"
-#define LLAP_COMMAND_CT 7
-
+#define LLAP_COMMAND_CT 13
+#define DECIMAL_PLACES 1
 /* The structure below is used to parse the incoming messages
    pf is a pointer to the function used for each message.
    The functions all take the message string as a parameter and
@@ -41,19 +39,26 @@
    To add new messages, include them in the structure, write a 
    function void xxx(char *) and increase LLAP_COMMAND_CT
 */   
+
 struct LLAP_command {
   char command[LLAP_MESSAGE_SIZE+1];
   void (*pt_funct)(char *);
 };
 
 struct LLAP_command LLAP_commands[LLAP_COMMAND_CT] = {
-  "HELLO----",  helloMessage,   //00
-  "DEVTYPE--",  devtypeMessage, //01  If you change control messages numbers - check code in function 
-  "FVER-----",  fverMessage,    //02
-  "SAVE-----",  saveMessage,    //03
-  "BATT-----",  battMessage,    //04
-  "MIDNIGHT-",  midnightMessage,//05
-  "TEMP-----",  tempMessage     //06
+  "HELLO----",  helloMessage,           //00
+  "DEVTYPE--",  devtypeMessage,         //01  If you change control messages numbers - check code in function 
+  "FVER-----",  fverMessage,            //02
+  "SAVE-----",  saveMessage,            //03
+  "BATT-----",  battMessage,            //04
+  "MIDNIGHT-",  midnightMessage,        //05
+  "TEMP-----",  tempMessage,            //06
+  "HUM------",  humidityMessage,        //07
+  "RAIN1H---",  rain1hMessage,          //08
+  "RAIND----",  raintodayMessage,       //09
+  "RAINSI---",  rainSinceLastMessage,   //10 - thinking of deprecating this
+  "WDSP-----",  windspeedMessage,       //11
+  "WDDI-----",  winddirMessage          //12
 };
 
 int command_num;
@@ -119,9 +124,9 @@ float windspd_avg2m; // [mph 2 minute average wind speed mph]
 int wind_dir_avg2m; // [0-360 2 minute average wind direction]
 float windgustkmh_10m; // [mph past 10 minutes wind gust mph ]
 int windgustdir_10m; // [0-360 past 10 minutes wind gust direction]
-float humidity; // [%]
+//float humidity; // [%]
 float tempc; // [temperature C]
-float rain_1h; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
+//float rain_1h; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
 volatile float rain_today; // [rain mm so far today in local time]
 volatile float rain_since_last; //needed for a 'last 24h' calculation in server
 //float baromin = 30.03;// [barom in] - It's hard to calculate baromin locally, do this in the agent
@@ -310,14 +315,14 @@ void loop()
     #endif  
 
     LLAP.bMsgReceived = false;
-    strlcpy(reply,msg,LLAP_MESSAGE_SIZE);
+    strlcpy(reply,msg,LLAP_MESSAGE_SIZE); // by default setup to echo the incoming message 
 
     // Step through LLAP_commands to work out which function to call
     
     command_num = 0;
     
  /*   while ( !strncmp(msg, LLAP_commands[command_num].command,LLAP_MESSAGE_SIZE) && command_num <= LLAP_COMMAND_CT)
-      command_num ++;
+      command_num ++; Would work - but doing below for debug
  */   
     for (command_num = 0; command_num <= LLAP_COMMAND_CT; command_num++)
     {
@@ -337,10 +342,7 @@ void loop()
         Serial.println("Breaking");
         #endif
         break;
-      }
-      
-      
-      
+      }      
     }
   
     
@@ -359,17 +361,38 @@ void loop()
     LLAP.sendMessage(reply);
   }  
   
-  delay(100); //Update every 100ms. No need to go any faster.   
+  delay(100); //Update every 100ms. No need to go any faster. Query this?   
 
 } // end of main loop
-
-void padToNine (String &reply)
+ 
+void formatFloat (int commandLen, float in_value, char * reply)
 {
-  // Takes a reply and pads it out to nine chars long to conform with LLAP standard
+  // Formats a float into the output reply string - assumes DECIMAL_PLACES decimal places
+  // The length of a string is 2 chars for the point and the DECIMAL_PLACES, plus one if it's negative (for sign) and then one for each decimal
+  // digit
+  
+  #ifdef DEBUG
+  Serial.println("DEBUG>> formatFloat()");
+  #endif
+  
+  char formatted [LLAP_MESSAGE_SIZE]; // bigger than necessary - but ok
+  int strf_len = DECIMAL_PLACES +1; //start with 9.1 etc then nudge around 
 
-  // Do some coding
-
+  if (in_value < 0)
+    strf_len++;
+  if ((in_value >= 10) && (in_value <= -10))
+    strf_len++;
+  if ((in_value >= 100) || (in_value <= -100))
+    strf_len++;
+  if ((in_value >= 1000) || (in_value <= -1000))
+    strf_len++;  
+  
+  dtostrf(in_value,strf_len,DECIMAL_PLACES,formatted);  
+  strcpy(reply + commandLen,formatted);
+  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
 }
+
+// ========================================= Personality functions start here ==============================
 
 void tempMessage(char * reply)
 {
@@ -427,6 +450,121 @@ void tempMessage(char * reply)
   fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
   
 }
+
+void humidityMessage(char * reply)
+{
+  #ifdef DEBUG
+  Serial.println("DEBUG>> hunidityMessage()");
+  #endif
+  const int cmdlen = 3; // "HUM"
+  float h;
+  int strf_len = 3; 
+               //This is a fiddle to format temperature readings - 
+               //floats don't work with sprintf()
+  char humidity [LLAP_MESSAGE_SIZE]; // shrink this if memory is an issue
+  
+  h = myHumidity.readHumidity(); // percent
+  
+  if (h < 10)  
+    strf_len--;
+  else 
+  if (h >=100) 
+    strf_len++; 
+   
+  dtostrf(h,strf_len,1,humidity);
+  
+  strcpy(reply + cmdlen,humidity);
+  
+  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string  
+}
+
+void rain1hMessage(char * reply)
+{
+  #ifdef DEBUG
+  Serial.println("DEBUG>> rain1hMessage()");
+  #endif
+  const int cmdlen = 6; // "RAIN1H"
+  float r1 = 0;
+  int strf_len = 3; 
+                
+  char rain1h [LLAP_MESSAGE_SIZE]; // shrink this if memory is an issue
+  
+  for (int i = 0 ; i < 60 ; i++)
+       r1 += rainHour[i];
+  
+  if (r1 < 10) 
+    strf_len--;
+  else if (r1 >=100) 
+    strf_len++; 
+  
+  dtostrf(r1,strf_len,1,rain1h);
+  
+  strcpy(reply + cmdlen,rain1h);
+  
+  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
+  
+}
+  
+void raintodayMessage(char * reply)
+{
+  #ifdef DEBUG
+  Serial.println("DEBUG>> raintodayMessage()");
+  #endif
+  
+  const int cmdlen = 5; // "RAIND"
+  float rt = rain_today; // that's global - updated by interrupt
+  
+  formatFloat (cmdlen, rt, reply);
+  // The output string should now be set up.  
+}
+
+void rainSinceLastMessage(char * reply)
+{
+  #ifdef DEBUG
+  Serial.println("DEBUG>> rainsinceLastMessage()");
+  #endif
+  
+  const int cmdlen = 6; // "RAINSI"
+  float rs = rain_since_last; // that's global - updated by interrupt
+  rain_since_last = 0; //reset straight away - it's updated by interrupt
+  formatFloat (cmdlen, rs, reply);
+  // The output string should now be set up.  
+}
+
+void windspeedMessage(char * reply)
+{
+  #ifdef DEBUG
+  Serial.println("DEBUG>> windspeedMessage()");
+  #endif
+  
+  const int cmdlen = 4; // "WDSP"
+  
+  float deltaTime = millis() - lastWindCheck; //750ms
+
+  deltaTime /= 1000.0; //Covert to seconds
+
+  float ws = (float)windClicks / deltaTime; //3 / 0.750s = 4
+
+  windClicks = 0; //Reset and start watching for new wind (global)
+  lastWindCheck = millis();
+
+  ws *= 2.4; // need to review this - not sure what is going on!
+
+  formatFloat (cmdlen, ws, reply);
+  // The output string should now be set up.  
+}  
+  
+void winddirMessage (char * reply)
+{
+  //This one is a bit different - as direction is an int and we use get_wind_direction elsewhere 
+  const int cmdlen = 4; // "WDSP"
+  //char[4] windDir;
+  
+  int wd = get_wind_direction();
+  //sprintf(reply+cmdlen, "%d", wd);
+  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
+}
+
 
 //Prints the various arrays for debugging
 #ifdef DEBUG
