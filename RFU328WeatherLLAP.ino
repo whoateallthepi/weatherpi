@@ -61,30 +61,27 @@ struct LLAP_command LLAP_commands[LLAP_COMMAND_CT] = {
   "WDDI-----",  winddirMessage          //12
 };
 
-int command_num;
-
 char msg [LLAP_MESSAGE_SIZE + 1];      // storage for incoming message plus null character
 char reply [LLAP_MESSAGE_SIZE + 1];    // storage for reply plus null character
 
-
 SFE_BMP180 myPressure; //Create an instance of the pressure sensor
-HTU21D myHumidity; //Create an instance of the humidity sensor
+// Making humidity local - pressure stays global and initialised in setup
+// as also used by temperature code. Plus it is probably the most called code
+// HTU21D myHumidity; //Create an instance of the humidity sensor
 
 //Hardware pin definitions
 //-------------------------------------------------------------------------------------------
 // digital I/O pins
 
-const byte WSPEED = 3;
-const byte RAIN = 2;
-const byte STAT1 = 7;
-const byte RADIO = 8; //Pin for switching on the Xino RF radio
-const byte LED = 10; // Proof of life
+#define WSPEED 3
+#define RAIN 2
+#define STAT1 7
+#define RADIO 8 //Pin for switching on the Xino RF radio
+#define LED 10 // Proof of life
 
 // analog I/O pins
-const byte WDIR = A1;
-//const byte LIGHT = A1;
-//const byte BATT = A2;
-//const byte REFERENCE_3V3 = A3;
+#define WDIR A1
+
 //-------------------------------------------------------------------------------------------
 
 //Global Variables - probably could do with some pruning
@@ -110,32 +107,32 @@ volatile byte windClicks = 0;
 //Total rain over date (store one per day)
 
 byte windspdavg[120]; //120 bytes to keep track of 2 minute average
-int winddiravg[120]; //120 ints to keep track of 2 minute average
+byte winddiravg[120]; //120 bytes to keep track of 2 minute average - cut to bytes from ints
 float windgust_10m[10]; //10 floats to keep track of largest gust in the last 10 minutes
 int windgustdirection_10m[10]; //10 ints to keep track of 10 minute max
 volatile float rainHour[60]; //60 floating numbers to keep track of 60 minutes of rain
 
 //These are all the weather values that wunderground expects:
-int wind_dir; // [0-360 instantaneous wind direction]
+byte wind_dir; // [0-360 instantaneous wind direction]
 float windspeed; // [mph instantaneous wind speed]
 float windgust; // [mph current wind gust, using software specific time period]
-int windgustdir; // [0-360 using software specific time period]
+byte windgustdir; // [0-360 using software specific time period]
 float windspd_avg2m; // [mph 2 minute average wind speed mph]
-int wind_dir_avg2m; // [0-360 2 minute average wind direction]
+int wind_dir_avg2m; // [0-360 2 minute average wind direction]- Maybe byte??
 float windgustkmh_10m; // [mph past 10 minutes wind gust mph ]
-int windgustdir_10m; // [0-360 past 10 minutes wind gust direction]
+int windgustdir_10m; // [0-360 past 10 minutes wind gust direction] Maybe byte??
 //float humidity; // [%]
-float tempc; // [temperature C]
+//float tempc; // [temperature C]
 //float rain_1h; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
 volatile float rain_today; // [rain mm so far today in local time]
 volatile float rain_since_last; //needed for a 'last 24h' calculation in server
 //float baromin = 30.03;// [barom in] - It's hard to calculate baromin locally, do this in the agent
-float pressure;
+//float pressure;
 //float dewptf; // [dewpoint F] - It's hard to calculate dewpoint locally, do this in the agent
 
 //These are not output in this version of the hardware - but leaving it in anyway
-float batt_lvl = 11.8;
-float light_lvl = 0.72;
+//float batt_lvl = 11.8;
+//float light_lvl = 0.72;
 
 // volatiles are subject to modification by IRQs
 volatile unsigned long raintime, rainlast, raininterval, rain;
@@ -144,6 +141,7 @@ volatile unsigned long raintime, rainlast, raininterval, rain;
 
 //Interrupt routines (to do - move these and use prototypes)
 //-------------------------------------------------------------------------------------------
+
 void rainIRQ()
 // Count rain gauge bucket tips as they occur
 // Activated by the magnet and reed switch in the rain gauge, attached to input D2
@@ -199,7 +197,7 @@ void setup()
 
   myPressure.begin(); // crank up the pressure sensor
 
-  myHumidity.begin(); //Configure the humidity sensor
+  //myHumidity.begin(); //Configure the humidity sensor
 
   seconds = 0;
   lastSecond = millis();
@@ -243,7 +241,7 @@ void loop()
   // digitalWrite(LED, LOW);
 
   #ifdef TRACE
-  Serial.println("DEBUG>> starting main loop");
+  Serial.println("TRACE>> starting main loop");
   #endif
   
   char status;
@@ -301,26 +299,25 @@ void loop()
 
   //Here we go with the LLAP stuff
   #ifdef TRACE
-  Serial.println("DEBUG>> check LLP");
+  Serial.println("TRACE>> check LLP");
   #endif
   if (LLAP.bMsgReceived) // got a message?
   {
-    
-    LLAP.sMessage.toCharArray(msg, LLAP_MESSAGE_SIZE + 1);
-    msg[LLAP_MESSAGE_SIZE] = '\0';  
-    
     #ifdef DEBUG
     Serial.print("LLAP message received: ");
     Serial.println(msg);
     #endif  
-
+    
+    int command_num;
+    LLAP.sMessage.toCharArray(msg, LLAP_MESSAGE_SIZE + 1);
+    msg[LLAP_MESSAGE_SIZE] = '\0';  
+    
     LLAP.bMsgReceived = false;
     strlcpy(reply,msg,LLAP_MESSAGE_SIZE); // by default setup to echo the incoming message 
 
     // Step through LLAP_commands to work out which function to call
     
-    command_num = 0;
-    
+       
  /*   while ( !strncmp(msg, LLAP_commands[command_num].command,LLAP_MESSAGE_SIZE) && command_num <= LLAP_COMMAND_CT)
       command_num ++; Would work - but doing below for debug
  */   
@@ -355,8 +352,8 @@ void loop()
       LLAP_commands[command_num].pt_funct(reply);    // Calls the appropriate function to set up reply     
     }
     
-    #ifdef DEBUG
-    Serial.println("DEBUG>> Sending LLAP");
+    #ifdef TRACE
+    Serial.println("TRACE>> Sending LLAP");
     #endif
     LLAP.sendMessage(reply);
   }  
@@ -371,8 +368,8 @@ void formatFloat (int commandLen, float in_value, char * reply)
   // The length of a string is 2 chars for the point and the DECIMAL_PLACES, plus one if it's negative (for sign) and then one for each decimal
   // digit
   
-  #ifdef DEBUG
-  Serial.println("DEBUG>> formatFloat()");
+  #ifdef TRACE
+  Serial.println("TRACE>> formatFloat()");
   #endif
   
   char formatted [LLAP_MESSAGE_SIZE]; // bigger than necessary - but ok
@@ -397,8 +394,8 @@ void formatFloat (int commandLen, float in_value, char * reply)
 void tempMessage(char * reply)
 {
   
-  #ifdef DEBUG
-  Serial.println("DEBUG>> tempMessage()");
+  #ifdef TRACE
+  Serial.println("TRACE>> tempMessage()");
   #endif
   
   const int cmdlen = 4; // "TEMP"
@@ -438,18 +435,21 @@ void tempMessage(char * reply)
 
 void humidityMessage(char * reply)
 {
-  #ifdef DEBUG
-  Serial.println("DEBUG>> hunidityMessage()");
+  #ifdef TRACE
+  Serial.println("TRACE>> hunidityMessage()");
   #endif
   const int cmdlen = 3; // "HUM"
+  HTU21D myHumidity;
   
+  myHumidity.begin(); //Configure the humidity sensor
+    
   formatFloat (cmdlen, myHumidity.readHumidity(), reply);
 }
 
 void rain1hMessage(char * reply)
 {
-  #ifdef DEBUG
-  Serial.println("DEBUG>> rain1hMessage()");
+  #ifdef TRACE
+  Serial.println("TRACE>> rain1hMessage()");
   #endif
   const int cmdlen = 6; // "RAIN1H"
   float r1 = 0;
@@ -462,8 +462,8 @@ void rain1hMessage(char * reply)
   
 void raintodayMessage(char * reply)
 {
-  #ifdef DEBUG
-  Serial.println("DEBUG>> raintodayMessage()");
+  #ifdef TRACE
+  Serial.println("TRACE>> raintodayMessage()");
   #endif
   
   const int cmdlen = 5; // "RAIND"
@@ -474,8 +474,8 @@ void raintodayMessage(char * reply)
 
 void rainSinceLastMessage(char * reply)
 {
-  #ifdef DEBUG
-  Serial.println("DEBUG>> rainsinceLastMessage()");
+  #ifdef TRACE
+  Serial.println("TRACE>> rainsinceLastMessage()");
   #endif
   
   const int cmdlen = 6; // "RAINSI"
@@ -487,8 +487,8 @@ void rainSinceLastMessage(char * reply)
 
 void windspeedMessage(char * reply)
 {
-  #ifdef DEBUG
-  Serial.println("DEBUG>> windspeedMessage()");
+  #ifdef TRACE
+  Serial.println("TRACE>> windspeedMessage()");
   #endif
   
   const int cmdlen = 4; // "WDSP"
@@ -658,8 +658,8 @@ int averageAnalogRead(int pinToRead)
 
 void helloMessage(char * reply)
 {
-  #ifdef DEBUG
-  Serial.println("DEBUG>> helloMessage");
+  #ifdef TRACE
+  Serial.println("TRACE>> helloMessage");
   #endif
   
   return; // just echo it back!
