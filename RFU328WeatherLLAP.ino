@@ -11,7 +11,8 @@
 //#include <SoftwareSerial.h> //Connection to Imp
 #include <string.h> 
 #include <Wire.h> //I2C needed for sensors
-//#include <stdio.h> //for sprintf()
+#include <stdio.h> //for sprintf()
+#include <math.h>  // for trig functions
 
 #include "HTU21D.h" //Humidity sensor
 #include <SFE_BMP180.h> //Pressure and temperature sensor
@@ -106,17 +107,18 @@ volatile byte windClicks = 0;
 //Rain over the past hour (store 1 per minute)
 //Total rain over date (store one per day)
 
+//TODO: Review these sizes
 byte windspdavg[120]; //120 bytes to keep track of 2 minute average
-byte winddiravg[120]; //120 bytes to keep track of 2 minute average - cut to bytes from ints
-float windgust_10m[10]; //10 floats to keep track of largest gust in the last 10 minutes
-int windgustdirection_10m[10]; //10 ints to keep track of 10 minute max
+byte winddiravg[120]; //120 bytes to keep track of 2 minute average - in sectors 0-15
+byte windgust_10m[10]; //10 floats to keep track of largest gust in the last 10 minutes
+byte windgustdirection_10m[10]; //10 byte to keep track of 10 minute max
 volatile float rainHour[60]; //60 floating numbers to keep track of 60 minutes of rain
 
-//These are all the weather values that wunderground expects:
-byte wind_dir; // [0-360 instantaneous wind direction]
+// TO DO: Look at moving these into subroutines
+int wind_dir; // [0-360 instantaneous wind direction]
 float windspeed; // [mph instantaneous wind speed]
 float windgust; // [mph current wind gust, using software specific time period]
-byte windgustdir; // [0-360 using software specific time period]
+int windgustdir; // [0-360 using software specific time period]
 float windspd_avg2m; // [mph 2 minute average wind speed mph]
 int wind_dir_avg2m; // [0-360 2 minute average wind direction]- Maybe byte??
 float windgustkmh_10m; // [mph past 10 minutes wind gust mph ]
@@ -244,124 +246,145 @@ void loop()
   Serial.println("TRACE>> starting main loop");
   #endif
   
-  char status;
+  //char status;
   int rc = 0;
   // wdt_reset(); //Pet the dog
 
+  updateWind(); // 
+  
   //Keep track of which minute it is
   if (millis() - lastSecond >= 1000)
   {
+    updateWind(); // We are running this once a second - hopefully. I might slow it down
     lastSecond += 1000;
-
-    //Take a speed and direction reading every second for 2 minute average
-    if (++seconds_2m > 119) seconds_2m = 0;
-
-    //Calc the wind speed and direction every second for 120 second to get 2 minute average
-    windspeed = get_wind_speed();
-    wind_dir = get_wind_direction();
-    windspdavg[seconds_2m] = (int)windspeed;
-    winddiravg[seconds_2m] = wind_dir;
-    //if(seconds_2m % 10 == 0) displayArrays();
-
-    //Check to see if this is a gust for the minute
-    if (windspeed > windgust_10m[minutes_10m])
-    {
-      windgust_10m[minutes_10m] = windspeed;
-      windgustdirection_10m[minutes_10m] = wind_dir;
-    }
-
-    //Check to see if this is a gust for the day
-    //Resets at midnight each night
-    if (windspeed > windgust)
-    {
-      windgust = windspeed;
-      windgustdir = wind_dir;
-    }
-
-    //Blink stat LED briefly to show we are alive
-    digitalWrite(LED, HIGH);
-    //reportWeather(); //Print the current readings. Takes 172ms.
-    delay(25);
-    digitalWrite(LED, LOW);
-
-    //If we roll over 60 seconds then update the arrays for rain and windgust
-    if (++seconds > 59)
-    {
-      seconds = 0;
-
-      if (++minutes > 59) minutes = 0;
-      if (++minutes_10m > 9) minutes_10m = 0;
-
-      rainHour[minutes] = 0; //Zero out this minute's rainfall amount
-      windgust_10m[minutes_10m] = 0; //Zero out this minute's gust
-    }
   }
 
   //Here we go with the LLAP stuff
   #ifdef TRACE
   Serial.println("TRACE>> check LLP");
   #endif
+  
   if (LLAP.bMsgReceived) // got a message?
   {
-    #ifdef DEBUG
-    Serial.print("LLAP message received: ");
-    Serial.println(msg);
-    #endif  
-    
-    int command_num;
-    LLAP.sMessage.toCharArray(msg, LLAP_MESSAGE_SIZE + 1);
-    msg[LLAP_MESSAGE_SIZE] = '\0';  
-    
     LLAP.bMsgReceived = false;
-    strlcpy(reply,msg,LLAP_MESSAGE_SIZE); // by default setup to echo the incoming message 
+    processLLAPMessage();
+  }
 
-    // Step through LLAP_commands to work out which function to call
-    
-       
- /*   while ( !strncmp(msg, LLAP_commands[command_num].command,LLAP_MESSAGE_SIZE) && command_num <= LLAP_COMMAND_CT)
-      command_num ++; Would work - but doing below for debug
- */   
-    for (command_num = 0; command_num <= LLAP_COMMAND_CT; command_num++)
-    {
-      #ifdef DEBUG
-        Serial.println(LLAP_commands[command_num].command);
-        Serial.println(msg);
-        
-        Serial.print("Command num: ");
-        Serial.println(command_num);
-        Serial.print("rc: ");
-        Serial.println(rc);
-      #endif
-      
-      if (!strncmp(msg, LLAP_commands[command_num].command,LLAP_MESSAGE_SIZE))
-      {
-        #ifdef DEBUG
-        Serial.println("Breaking");
-        #endif
-        break;
-      }      
-    }
-  
-    
-    if (command_num >= LLAP_COMMAND_CT) 
-      strlcpy(reply,"ERROR1000",LLAP_MESSAGE_SIZE+1); // 1000 = unrecognised command
-    else
-    {
-      //void (*pf) (char *);
-      // pf=*(LLAP_commands[command_num].pt_funct)
-      LLAP_commands[command_num].pt_funct(reply);    // Calls the appropriate function to set up reply     
-    }
-    
-    #ifdef TRACE
-    Serial.println("TRACE>> Sending LLAP");
-    #endif
-    LLAP.sendMessage(reply);
-  }  
-  
   delay(100); //Update every 100ms. No need to go any faster. Query this?   
 
-} // end of main loop
- 
+} 
+//----------------------------------- end of main loop ------------------------------- 
+
+void updateWind()
+{
+  // This is the chief recording section and is called from the main loop, 
+  // as the wind counter (via interrupts) needs to be written into 
+  // tables for 10m and 2m averages. Similarly for directions
+    
+  //Take a speed and direction reading every second for 2 minute average
+  //
+  if (++seconds_2m > 119) seconds_2m = 0;
+
+  //Calc the wind speed and direction every second for 120 second to get 2 minute average
+  windspeed = get_wind_speed();
+  wind_dir = get_wind_direction();
+  windspdavg[seconds_2m] = (int)windspeed;
+  winddiravg[seconds_2m] = wind_dir; // Remeber we are storing this in sectors now
+  //if(seconds_2m % 10 == 0) displayArrays();
+
+  //Check to see if this is a gust for the minute
+  if (windspeed > windgust_10m[minutes_10m])
+  {
+    windgust_10m[minutes_10m] = windspeed;
+    windgustdirection_10m[minutes_10m] = wind_dir;
+  }
+
+  //Check to see if this is a gust for the day
+  //Resets at midnight each night
+  if (windspeed > windgust)
+  {
+    windgust = windspeed;
+    windgustdir = wind_dir;
+  }
+
+  //Blink stat LED briefly to show we are alive
+  digitalWrite(LED, HIGH);
+  //reportWeather(); //Print the current readings. Takes 172ms.
+  delay(25);
+  digitalWrite(LED, LOW);
+
+  //If we roll over 60 seconds then update the arrays for rain and windgust
+  if (++seconds > 59)
+  {
+    seconds = 0;
+
+    if (++minutes > 59) minutes = 0;
+    if (++minutes_10m > 9) minutes_10m = 0;
+
+    rainHour[minutes] = 0; //Zero out this minute's rainfall amount
+    windgust_10m[minutes_10m] = 0; //Zero out this minute's gust
+  }
+}
+
+void processLLAPMessage ()
+{
+  // This is the second part of the main loop - dealing with messages from the controller
+  // (the Raspberry Pi)
+    
+  int command_num;
+  LLAP.sMessage.toCharArray(msg, LLAP_MESSAGE_SIZE + 1);
+  msg[LLAP_MESSAGE_SIZE] = '\0';  
+  
+  #ifdef DEBUG
+  Serial.print("LLAP message received: ");
+  Serial.println(msg);
+  #endif  
+    
+  strlcpy(reply,msg,LLAP_MESSAGE_SIZE); // by default setup to echo the incoming message 
+
+  // Step through LLAP_commands to work out which function to call
+  
+     
+ /*   while ( !strncmp(msg, LLAP_commands[command_num].command,LLAP_MESSAGE_SIZE) && command_num <= LLAP_COMMAND_CT)
+    command_num ++; Would work - but doing below for debug
+ */   
+  for (command_num = 0; command_num <= LLAP_COMMAND_CT; command_num++)
+  {
+    #ifdef DEBUG
+    Serial.println(LLAP_commands[command_num].command);
+    Serial.println(msg);
+      
+    Serial.print("Command num: ");
+    Serial.println(command_num);
+    Serial.print("rc: ");
+    Serial.println(rc);
+    #endif
+    
+    if (!strncmp(msg, LLAP_commands[command_num].command,LLAP_MESSAGE_SIZE))
+    {
+      #ifdef DEBUG
+      Serial.println("Breaking");
+      #endif
+      break;
+    }      
+  }
+
+  if (command_num >= LLAP_COMMAND_CT) 
+    strlcpy(reply,"ERROR1000",LLAP_MESSAGE_SIZE+1); // 1000 = unrecognised command
+  else
+  {
+    //void (*pf) (char *);
+    // pf=*(LLAP_commands[command_num].pt_funct)
+    LLAP_commands[command_num].pt_funct(reply);    // Calls the appropriate function to set up reply     
+  }
+  
+  #ifdef TRACE
+  Serial.println("TRACE>> Sending LLAP");
+  #endif
+  LLAP.sendMessage(reply);
+}  
+
+
 void formatFloat (int commandLen, float in_value, char * reply)
 {
   // Formats a float into the output reply string - assumes DECIMAL_PLACES decimal places
@@ -402,7 +425,7 @@ void tempMessage(char * reply)
   double T;
   float t2;
   char temperature [LLAP_MESSAGE_SIZE]; // shrink this if memory is an issue
-  int status = myPressure.startTemperature();
+  char status = myPressure.startTemperature();
   if (status != 0)
   {
     // Wait for the measurement to complete:
@@ -487,41 +510,40 @@ void rainSinceLastMessage(char * reply)
 
 void windspeedMessage(char * reply)
 {
+  // The latest reading of wind speed is in windspeed - this is updated in the main loop
+  // to maintain the tables for minute averages etc
   #ifdef TRACE
   Serial.println("TRACE>> windspeedMessage()");
   #endif
   
   const int cmdlen = 4; // "WDSP"
   
-  float deltaTime = millis() - lastWindCheck; //750ms
-
-  deltaTime /= 1000.0; //Covert to seconds
-
-  float ws = (float)windClicks / deltaTime; //3 / 0.750s = 4
-
-  windClicks = 0; //Reset and start watching for new wind (global)
-  lastWindCheck = millis();
-
-  ws *= 2.4; // need to review this - not sure what is going on!
-
-  formatFloat (cmdlen, ws, reply);
+  formatFloat (cmdlen, windspeed, reply);
   // The output string should now be set up.  
 }  
   
 void winddirMessage (char * reply)
 {
   //This one is a bit different - as direction is an int and we use get_wind_direction elsewhere 
-  const int cmdlen = 4; // "WDSP"
-  //char[4] windDir;
+  // The last reading of wind direction is stored in wind_dir - we need to do that 
+  // in the main loop to maintain all the averaging arrays. All we do here is convert to 
+  // degrees from the 0-15 sectors format we use to store the data.
+  //
+  const int cmdlen = 4; // "WDDI"
+               
+  sprintf(reply+cmdlen, "%d", sectorsToDegrees(wind_dir));
   
-  int wd = get_wind_direction();
-  //sprintf(reply+cmdlen, "%d", wd);
   fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
 }
 
+int sectorsToDegrees(int sectors)
+{
+  return (int)((sectors * 22.5) +0.5);
+}
 
 //Prints the various arrays for debugging
-#ifdef DEBUG
+
+#ifdef ARRAYDEBUG
 void displayArrays()
 {
   //Windgusts in this hour
@@ -613,10 +635,10 @@ float get_wind_speed()
 }
 
 int get_wind_direction()
-// read the wind direction sensor, return heading in degrees
+// read the wind direction sensor, return heading in RADIANS
 {
   unsigned int adc;
-
+  
   adc = averageAnalogRead(WDIR); // get the current reading from the sensor
   Serial.print(adc);
   // The following table is ADC readings for the wind direction sensor output, sorted from low to high.
@@ -624,6 +646,30 @@ int get_wind_direction()
   // Note that these are not in compass degree order! See Weather Meters datasheet for more information.
   // These values based on a 10k r1 value and the r2 value from the meters
 
+  if (adc < 75)  return 5;   //(113);
+  if (adc < 89)  return 3;   //(68);
+  if (adc < 110) return 4;   //(90);
+  if (adc < 155) return 7;  //(158);
+  if (adc < 214) return 6;   //(135);
+  if (adc < 266) return 9;  //(202.5)
+  if (adc < 347) return 8;  //(180);
+  if (adc < 434) return 1;  //(22.5 degrees = 0.3927 Rad);
+  if (adc < 531) return 2;  //(45);
+  if (adc < 615) return 11; //(248);
+  if (adc < 708) return 10; //(225);
+  if (adc < 744) return 15; //(338);
+  if (adc < 806) return 0;  //(0);
+  if (adc < 857) return 13; //(293);
+  if (adc < 915) return 14; //(315);
+  if (adc < 984) return 12; //(270);
+  return -1; // error, disconnected?
+  
+  // a circle is 2 * pi radians so each sector is PI/8 
+  // Below would return radians - but that uses up too much storage
+  //return ((PI/8) * sector);
+}
+
+/* Below is the old 'degrees' coding - just in case we ever need it 
   if (adc < 75) return (113);
   if (adc < 89) return (68);
   if (adc < 110) return (90);
@@ -640,7 +686,8 @@ int get_wind_direction()
   if (adc < 915) return (315);
   if (adc < 984) return (270);
   return (-1); // error, disconnected?
-}
+  */
+ 
 
 //Takes an average of readings on a given pin
 //Returns the average
