@@ -3,7 +3,7 @@
  By: Tom Cooper based on work by Nathan Seidle
  To Do: Code in the check for station id
  This version is reconfigged to use BMP180 pressure sensor
- This version is a major reworked to use LLAP comms protocol
+ 2.01 version is a major reworked to use LLAP comms protocol
 */
 //#define DEBUG
 //#define TRACE
@@ -20,7 +20,7 @@
 #include <EEPROM.h>
 #include <LLAPSerial.h>
 
-#define VERSION "1.01-----" //Extra chars are the LLAP filler
+#define VERSION "2.01-----" //Extra chars are the LLAP filler
 #define DEVICETYPE "WSTAT-----"
 #define DEVICEID1 '-'
 #define DEVICEID2 '-'
@@ -414,6 +414,40 @@ void formatFloat (int commandLen, float in_value, char * reply)
 
 // ========================================= Personality functions start here ==============================
 
+void helloMessage(char * reply)
+{
+  #ifdef TRACE
+  Serial.println("TRACE>> helloMessage");
+  #endif
+  
+  return; // just echo it back!
+}
+
+void fverMessage(char * reply)
+{
+ strlcpy(reply+4,VERSION,LLAP_MESSAGE_SIZE-4);
+}
+
+void devtypeMessage(char * reply)
+{
+  strlcpy(reply+7,DEVICETYPE,LLAP_MESSAGE_SIZE-6);
+}          
+
+void saveMessage(char * reply)
+{
+  EEPROM.write(EEPROM_DEVICEID1, LLAP.deviceId[0]);    // save the device ID
+  EEPROM.write(EEPROM_DEVICEID2, LLAP.deviceId[1]);    // save the device ID
+}
+
+void midnightMessage (char * reply)
+{
+  midnightReset();
+}
+
+void battMessage(char * reply)
+{
+}
+
 void tempMessage(char * reply)
 {
   
@@ -703,40 +737,75 @@ int averageAnalogRead(int pinToRead)
   return (runningValue);
 }
 
-void helloMessage(char * reply)
+//Takes a row of 'sectors' - these are wind directions, 1-15 - and corresponding wind speeds and returns a 
+//floating point average wind direction in degrees.
+//Most of the calculations are in radians as that is how the trig functions work. The basic formula is to break the direction into a 
+//north-south component and and east-west component.Here's a formula using degrees for ease of reading
+/* 
+  Reading 1: NW at 5kmh
+  **************
+  NS1 = 5 * cos(315) = 3.54
+  EW1 = 5 * sin(315) = -3.54
+
+  Reading 2: NE at 10 kmh
+  *************
+  NS2 = 10 * cos(45) = 7.07
+  EW2 = 10 * sin(45) = 7.07
+
+  Add components:
+  ***************
+  NS_TOT = NS1 + NS2 = 10.61
+
+  EW_TOT = EW1 + EW2 = 3.54
+
+  Vector:
+  *******
+  Average Direction = atan(EW_TOT / NS_TOT) = atan(3.54 / 10.61) = 18.43 degrees
+
+
+
+// TO DO: Consider weighting by wind speed - ie multiplying each of the vectors by the speed 
+I was considering weighting this by windspeed 
+*/
+float vectorAverage (char * sectors, char * speeds, int count)
 {
-  #ifdef TRACE
-  Serial.println("TRACE>> helloMessage");
+  float rad;
+  float NS_total = 0;
+  float EW_total = 0;
+    
+  for (int i=0; i < count; i++)
+  {
+    float rad = sectorsToRadians(sectors[i]);
+    NS_total += speeds[i] * cos(rad);
+    EW_total += speeds[i] * sin(rad);
+    #ifdef DEBUG
+    Serial.print(" i =:"); 
+    Serial.println(i);
+    Serial.print("speeds[i] =:"
+    Serial.println((int)speeds[i]);
+    Serial.print("sectors [i] =:");
+    Serial.println((int)sectors[i]);
+    Serial.print("RAD =:");
+    Serial.println(rad);
+    #endif
+  }
+  
+  #ifdef DEBUG
+  Serial.print("NS_total:");
+  Serial.print(NS_total, 2);
+  Serial.print("EW_total:");
+  Serial.print(EW_total, 2);
   #endif
   
-  return; // just echo it back!
+  return (atan(NS_total/EW_total));
 }
 
-void fverMessage(char * reply)
+int sectorsToRadians (char sector)
 {
- strlcpy(reply+4,VERSION,LLAP_MESSAGE_SIZE-4);
+  // a circle is 2 * pi radians so each sector is PI/8 
+ 
+  return ((PI/8) * sector);
 }
-
-void devtypeMessage(char * reply)
-{
-  strlcpy(reply+7,DEVICETYPE,LLAP_MESSAGE_SIZE-6);
-}          
-
-void saveMessage(char * reply)
-{
-  EEPROM.write(EEPROM_DEVICEID1, LLAP.deviceId[0]);    // save the device ID
-  EEPROM.write(EEPROM_DEVICEID2, LLAP.deviceId[1]);    // save the device ID
-}
-
-void midnightMessage (char * reply)
-{
-  midnightReset();
-}
-
-void battMessage(char * reply)
-{
-}
-
 
 #ifdef LEGACY
 
