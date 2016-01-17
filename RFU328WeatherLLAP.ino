@@ -55,9 +55,9 @@ struct LLAP_command LLAP_commands[LLAP_COMMAND_CT] = {
   "MIDNIGHT-",  midnightMessage,        //05
   "TEMP-----",  tempMessage,            //06
   "HUM------",  humidityMessage,        //07
-  "RAIN1H---",  rain1hMessage,          //08
-  "RAIND----",  raintodayMessage,       //09
-  "RAINSI---",  rainSinceLastMessage,   //10 - thinking of deprecating this
+  "RN1H-----",  rain1hMessage,          //08
+  "RND------",  raintodayMessage,       //09
+  "RNSI-----",  rainSinceLastMessage,   //10 - thinking of deprecating this
   "WDSP-----",  windspeedMessage,       //11
   "WDDI-----",  winddirMessage          //12
 };
@@ -356,8 +356,8 @@ void processLLAPMessage ()
       
     Serial.print("Command num: ");
     Serial.println(command_num);
-    Serial.print("rc: ");
-    Serial.println(rc);
+    //Serial.print("rc: ");
+    //Serial.println(rc);
     #endif
     
     if (!strncmp(msg, LLAP_commands[command_num].command,LLAP_MESSAGE_SIZE))
@@ -451,13 +451,13 @@ void battMessage(char * reply)
 void tempMessage(char * reply)
 {
   
-  #ifdef TRACE
+  //#ifdef TRACE
   Serial.println("TRACE>> tempMessage()");
-  #endif
+  //#endif
   
   const int cmdlen = 4; // "TEMP"
-  double T;
-  float t2;
+  double T = 0;
+  float t2 = 0;
   char temperature [LLAP_MESSAGE_SIZE]; // shrink this if memory is an issue
   char status = myPressure.startTemperature();
   if (status != 0)
@@ -481,9 +481,9 @@ void tempMessage(char * reply)
     }
   }
   
-  #ifdef DEBUG
+  //#ifdef DEBUG
   //T=10.16;
-  #endif
+  //#endif
  
   
   formatFloat (cmdlen, float(T), reply);
@@ -508,7 +508,7 @@ void rain1hMessage(char * reply)
   #ifdef TRACE
   Serial.println("TRACE>> rain1hMessage()");
   #endif
-  const int cmdlen = 6; // "RAIN1H"
+  const int cmdlen = 4; // "RN1H"
   float r1 = 0;
    
   for (int i = 0 ; i < 60 ; i++)
@@ -523,7 +523,7 @@ void raintodayMessage(char * reply)
   Serial.println("TRACE>> raintodayMessage()");
   #endif
   
-  const int cmdlen = 5; // "RAIND"
+  const int cmdlen = 3; // "RND"
   
   formatFloat (cmdlen, rain_today, reply);
   // The output string should now be set up.  
@@ -535,7 +535,7 @@ void rainSinceLastMessage(char * reply)
   Serial.println("TRACE>> rainsinceLastMessage()");
   #endif
   
-  const int cmdlen = 6; // "RAINSI"
+  const int cmdlen = 4; // "RNSI"
   float rs = rain_since_last; // that's global - updated by interrupt
   rain_since_last = 0; //reset straight away - it's updated by interrupt
   formatFloat (cmdlen, rs, reply);
@@ -781,7 +781,7 @@ float vectorAverage (char * sectors, char * speeds, int count)
     #ifdef DEBUG
     Serial.print(" i =:"); 
     Serial.println(i);
-    Serial.print("speeds[i] =:"
+    Serial.print("speeds[i] =:");
     Serial.println((int)speeds[i]);
     Serial.print("sectors [i] =:");
     Serial.println((int)sectors[i]);
