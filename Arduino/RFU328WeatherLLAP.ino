@@ -3,7 +3,8 @@
  By: Tom Cooper based on work by Nathan Seidle
  To Do: Code in the check for station id
  This version is reconfigged to use BMP180 pressure sensor
- 2.01 version is a major reworked to use LLAP comms protocol
+ 2.0x version is a major reworked to use LLAP comms protocol
+ 2.01 21/01/2016 - First version ready for unit testing
 */
 //#define DEBUG
 //#define TRACE
@@ -29,8 +30,10 @@
 #define LLAP_MESSAGE_SIZE 9 // This is the size of the message payload 9 see LLAP standard
 #define INITIAL "STARTED--"  //  First message on load
 #define LLAP_FILLER "---------"
-#define LLAP_COMMAND_CT 13
+#define LLAP_COMMAND_CT 20
 #define DECIMAL_PLACES 1
+#define PRESSURE 'P'
+#define TEMPERATURE 'T'
 /* The structure below is used to parse the incoming messages
    pf is a pointer to the function used for each message.
    The functions all take the message string as a parameter and
@@ -59,7 +62,14 @@ struct LLAP_command LLAP_commands[LLAP_COMMAND_CT] = {
   "RND------",  raintodayMessage,       //09
   "RNSI-----",  rainSinceLastMessage,   //10 - thinking of deprecating this
   "WDSP-----",  windspeedMessage,       //11
-  "WDDI-----",  winddirMessage          //12
+  "WDDI-----",  winddirMessage,         //12
+  "WDGU-----",  windgustMessage,        //13
+  "WDGD-----",  windgustdirMessage,     //14
+  "WDS2-----",  windspeed2mMessage,     //15
+  "WDD2-----",  winddir2mMessage,       //16
+  "WDG10----",  windgust10mMessage,     //17
+  "WDGD10---",  windgustdir10mMessage,  //18
+  "BAR------",  barMessage              //19
 };
 
 char msg [LLAP_MESSAGE_SIZE + 1];      // storage for incoming message plus null character
@@ -75,10 +85,10 @@ SFE_BMP180 myPressure; //Create an instance of the pressure sensor
 // digital I/O pins
 
 #define WSPEED 3
-#define RAIN 2
-#define STAT1 7
-#define RADIO 8 //Pin for switching on the Xino RF radio
-#define LED 10 // Proof of life
+#define RAIN   2
+#define STAT1  7
+#define RADIO  8 //Pin for switching on the Xino RF radio
+#define LED    10 // Proof of life
 
 // analog I/O pins
 #define WDIR A1
@@ -108,10 +118,10 @@ volatile byte windClicks = 0;
 //Total rain over date (store one per day)
 
 //TODO: Review these sizes
-byte windspdavg[120]; //120 bytes to keep track of 2 minute average
-byte winddiravg[120]; //120 bytes to keep track of 2 minute average - in sectors 0-15
-byte windgust_10m[10]; //10 floats to keep track of largest gust in the last 10 minutes
-byte windgustdirection_10m[10]; //10 byte to keep track of 10 minute max
+char windspdavg[120]; //120 bytes to keep track of 2 minute average
+char winddiravg[120]; //120 bytes to keep track of 2 minute average - in sectors 0-15
+char windgust_10m[10]; //10 floats to keep track of largest gust in the last 10 minutes
+char windgustdirection_10m[10]; //10 byte to keep track of 10 minute max
 volatile float rainHour[60]; //60 floating numbers to keep track of 60 minutes of rain
 
 // TO DO: Look at moving these into subroutines
@@ -119,13 +129,9 @@ int wind_dir; // [0-360 instantaneous wind direction]
 float windspeed; // [mph instantaneous wind speed]
 float windgust; // [mph current wind gust, using software specific time period]
 int windgustdir; // [0-360 using software specific time period]
-float windspd_avg2m; // [mph 2 minute average wind speed mph]
+// float windspd_avg2m; // [mph 2 minute average wind speed mph] - no longer global
 int wind_dir_avg2m; // [0-360 2 minute average wind direction]- Maybe byte??
-float windgustkmh_10m; // [mph past 10 minutes wind gust mph ]
-int windgustdir_10m; // [0-360 past 10 minutes wind gust direction] Maybe byte??
-//float humidity; // [%]
-//float tempc; // [temperature C]
-//float rain_1h; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
+
 volatile float rain_today; // [rain mm so far today in local time]
 volatile float rain_since_last; //needed for a 'last 24h' calculation in server
 //float baromin = 30.03;// [barom in] - It's hard to calculate baromin locally, do this in the agent
@@ -446,6 +452,7 @@ void midnightMessage (char * reply)
 
 void battMessage(char * reply)
 {
+  //No code yet!
 }
 
 void tempMessage(char * reply)
@@ -456,7 +463,40 @@ void tempMessage(char * reply)
   //#endif
   
   const int cmdlen = 4; // "TEMP"
+     
+  double T = getTemperatureorPressure(TEMPERATURE);
+
+  formatFloat (cmdlen, float(T), reply);
+  
+}
+
+void barMessage(char * reply)
+{
+  
+  //#ifdef TRACE
+  Serial.println("TRACE>> barMessage()");
+  //#endif
+  
+  const int cmdlen = 4; // "BAR"
+     
+  double T = getTemperatureorPressure(PRESSURE);
+
+  formatFloat (cmdlen, float(T), reply);
+  
+}
+
+
+double getTemperatureorPressure (char type)
+{
+  // Ideally temperatire and pressure would be called together and returned as a 
+  // pair - but we'll do it this way for now
+  
+  //#ifdef TRACE
+  Serial.println("TRACE>> barMessage()");
+  //#endif
+  
   double T = 0;
+  double P = 0;
   float t2 = 0;
   char temperature [LLAP_MESSAGE_SIZE]; // shrink this if memory is an issue
   char status = myPressure.startTemperature();
@@ -478,16 +518,36 @@ void tempMessage(char * reply)
       Serial.println(" deg C, ");
       #endif
       
+      if (type = PRESSURE)
+        return T;
+      
+      // Go on and get the pressure - otherwise we return the temperature
+      status = myPressure.startPressure(3);
+      if (status != 0)
+      {
+        // Wait for the measurement to complete:
+        delay(status);
+
+        // Retrieve the completed pressure measurement:
+        // Note that the measurement is stored in the variable P.
+        // Note also that the function requires the previous temperature measurement (T).
+        // (If temperature is stable, you can do one temperature measurement for a number of pressure measurements.)
+        // Function returns 1 if successful, 0 if failure.
+
+        status = myPressure.getPressure(P, T);
+        if (status != 0)
+        {
+        // Print out the measurement:
+        //Serial.print("absolute pressure: ");
+        //Serial.print(P,2);
+        //Serial.print(" mb, ");
+        //Serial.print(P*0.0295333727,2);
+        //Serial.println(" inHg");
+        }
+      }
     }
   }
-  
-  //#ifdef DEBUG
-  //T=10.16;
-  //#endif
- 
-  
-  formatFloat (cmdlen, float(T), reply);
-  
+  return P;
 }
 
 void humidityMessage(char * reply)
@@ -558,21 +618,131 @@ void windspeedMessage(char * reply)
   
 void winddirMessage (char * reply)
 {
-  //This one is a bit different - as direction is an int and we use get_wind_direction elsewhere 
+  //This one is a bit different - as direction is an int and we use 
+  //get_wind_direction elsewhere 
   // The last reading of wind direction is stored in wind_dir - we need to do that 
   // in the main loop to maintain all the averaging arrays. All we do here is convert to 
   // degrees from the 0-15 sectors format we use to store the data.
   //
   const int cmdlen = 4; // "WDDI"
                
-  sprintf(reply+cmdlen, "%d", sectorsToDegrees(wind_dir));
+  sprintf(reply+cmdlen, "%d", sectorstoDegrees(wind_dir));
   
   fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
 }
 
-int sectorsToDegrees(int sectors)
+void windgustMessage (char * reply)
+{
+  #ifdef TRACE
+  Serial.println("TRACE>> windgustMessage()");
+  #endif
+  
+  const int cmdlen = 4; // "WDGU"
+  
+  formatFloat (cmdlen, windgust, reply);
+  // The output string should now be set up.  
+}
+
+void windgustdirMessage (char * reply)
+{
+  #ifdef TRACE
+  Serial.println("TRACE>> windgustdirMessage()");
+  #endif
+  
+  const int cmdlen = 4; // "WDGD"
+  
+  sprintf(reply+cmdlen, "%d", sectorstoDegrees(windgustdir));
+  
+  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
+  
+}
+
+void windspeed2mMessage(char * reply)
+{
+  // Average wind speed for past two minutes - 
+  #ifdef TRACE
+  Serial.println("TRACE>> windspeed2mMessage()");
+  #endif
+  
+  const int cmdlen = 4; // "WDS2"
+  
+  float windspd_avg2m = 0;
+  for (int i = 0 ; i < 120 ; i++)
+    windspd_avg2m += windspdavg[i];
+  windspd_avg2m /= 120.0;
+    
+  formatFloat (cmdlen, windspd_avg2m, reply);
+  // The output string should now be set up.  
+}
+
+void winddir2mMessage (char * reply)
+{
+  //To do this realistically we need a vector average
+  //
+  const int cmdlen = 4; // "WDD2"
+  
+  float rad = vectorAverage(winddiravg, windspdavg, 120); 
+               
+  sprintf(reply+cmdlen, "%d", radiansToDegrees(rad));
+  
+  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
+}
+
+void windgust10mMessage (char * reply)
+{
+  // To think about - Idealy we'd call direction and speed together as the data could 
+  // shift between calls - hmmm
+  //
+  const int cmdlen = 5; // "WDG10"
+  float windgustkmh_10m = 0;
+  for (int i = 0; i < 10 ; i++)
+  {
+    if (windgust_10m[i] > windgustkmh_10m)
+    {
+      windgustkmh_10m = windgust_10m[i];
+//    windgustdir_10m = windgustdirection_10m[i];
+    }
+  }
+  
+  formatFloat (cmdlen, windgustkmh_10m, reply);
+  // The output string should now be set up.
+  
+}
+ 
+void windgustdir10mMessage (char * reply)
+{
+  // To think about - Idealy we'd call direction and speed together as the data could 
+  // shift between calls - hmmm
+  //
+  const int cmdlen = 6; // "WDGD10"
+  float windgustkmh_10m = 0;
+  float windgustdir_10m = 0;
+  
+  for (int i = 0; i < 10 ; i++)
+  {
+    if (windgust_10m[i] > windgustkmh_10m)
+    {
+      windgustkmh_10m = windgust_10m[i];
+      windgustdir_10m = windgustdirection_10m[i];
+    }
+  }
+  
+  sprintf(reply+cmdlen, "%d", sectorstoDegrees(windgustdir_10m));
+  
+  fillLLAPcmd(reply); // Adds any ----- fillers needed at the end of string
+  
+}    
+
+
+
+int sectorstoDegrees(int sectors)
 {
   return (int)((sectors * 22.5) +0.5);
+}
+
+int radiansToDegrees (float radians)
+{
+  return (int)((radians *(180/PI)) +0.5);
 }
 
 //Prints the various arrays for debugging
@@ -737,6 +907,7 @@ int averageAnalogRead(int pinToRead)
   return (runningValue);
 }
 
+float vectorAverage (char * sectors, char * speeds, int count)
 //Takes a row of 'sectors' - these are wind directions, 1-15 - and corresponding wind speeds and returns a 
 //floating point average wind direction in degrees.
 //Most of the calculations are in radians as that is how the trig functions work. The basic formula is to break the direction into a 
@@ -767,7 +938,6 @@ int averageAnalogRead(int pinToRead)
 // TO DO: Consider weighting by wind speed - ie multiplying each of the vectors by the speed 
 I was considering weighting this by windspeed 
 */
-float vectorAverage (char * sectors, char * speeds, int count)
 {
   float rad;
   float NS_total = 0;
@@ -806,359 +976,3 @@ int sectorsToRadians (char sector)
  
   return ((PI/8) * sector);
 }
-
-#ifdef LEGACY
-
-        //Calculates each of the variables that the Pi is expecting
-        void calcWeather()
-        {
-          //current wind_dir, current windspeed, windgust, and windgustdir are calculated every 100ms throughout the day
-
-          //Calc windspd_avg2m
-          double T, P; //used as interims for BMP calls
-          char status;
-          float temp = 0;
-          for (int i = 0 ; i < 120 ; i++)
-            temp += windspdavg[i];
-          temp /= 120.0;
-          windspd_avg2m = temp;
-
-          //Calc wind_dir_avg2m
-          temp = 0; //Can't use wind_dir_avg2m because it's an int
-          for (int i = 0 ; i < 120 ; i++)
-            temp += winddiravg[i];
-          temp /= 120;
-          wind_dir_avg2m = temp;
-
-          //Calc windgustkmh_10m
-          //Calc windgustdir_10m
-          //Find the largest windgust in the last 10 minutes
-          windgustkmh_10m = 0;
-          windgustdir_10m = 0;
-          //Step through the 10 minutes
-          for (int i = 0; i < 10 ; i++)
-          {
-            if (windgust_10m[i] > windgustkmh_10m)
-            {
-              windgustkmh_10m = windgust_10m[i];
-              windgustdir_10m = windgustdirection_10m[i];
-            }
-          }
-
-          //Calc humidity
-          humidity = myHumidity.readHumidity();
-          //float temp_h = myHumidity.readTemperature();
-          //Serial.print(" TempH:");
-          //Serial.print(temp_h, 2);
-
-          // Start a temperature measurement:
-          // If request is successful, the number of ms to wait is returned.
-          // If request is unsuccessful, 0 is returned.
-
-          status = myPressure.startTemperature();
-          if (status != 0)
-          {
-            // Wait for the measurement to complete:
-            delay(status);
-
-            // Retrieve the completed temperature measurement:
-            // Note that the measurement is stored in the variable T.
-            // Function returns 1 if successful, 0 if failure.
-
-            status = myPressure.getTemperature(T);
-            if (status != 0)
-            {
-              // Print out the measurement:
-              //Serial.print("temperature: ");
-              //Serial.print(T,2);
-              //Serial.print(" deg C, ");
-              // Start a pressure measurement:
-              // The parameter is the oversampling setting, from 0 to 3 (highest res, longest wait).
-              // If request is successful, the number of ms to wait is returned.
-              // If request is unsuccessful, 0 is returned.
-
-              status = myPressure.startPressure(3);
-              if (status != 0)
-              {
-                // Wait for the measurement to complete:
-                delay(status);
-
-                // Retrieve the completed pressure measurement:
-                // Note that the measurement is stored in the variable P.
-                // Note also that the function requires the previous temperature measurement (T).
-                // (If temperature is stable, you can do one temperature measurement for a number of pressure measurements.)
-                // Function returns 1 if successful, 0 if failure.
-
-                status = myPressure.getPressure(P, T);
-                if (status != 0)
-                {
-                  // Print out the measurement:
-                  //Serial.print("absolute pressure: ");
-                  //Serial.print(P,2);
-                  //Serial.print(" mb, ");
-                  //Serial.print(P*0.0295333727,2);
-                  //Serial.println(" inHg");
-                }
-
-              }
-            }
-          }
-          tempc = (float)(T);
-          pressure = (float)(P);
-
-          //Total rainfall for the day is calculated within the interrupt
-          //Calculate amount of rainfall for the last 60 minutes
-          rain_1h = 0;
-          for (int i = 0 ; i < 60 ; i++)
-            rain_1h += rainHour[i];
-
-          //Calc light level
-          light_lvl = get_light_level();
-
-          //Calc battery level
-          batt_lvl = get_battery_level();
-        }
-
-        //Returns the voltage of the light sensor based on the 3.3V rail
-        //This allows us to ignore what VCC might be (an Arduino plugged into USB has VCC of 4.5 to 5.2V)
-        float get_light_level()
-        {
-          return 0.00;
-        }
-
-        //Returns the voltage of the raw pin based on the 3.3V rail
-        //This allows us to ignore what VCC might be (an Arduino plugged into USB has VCC of 4.5 to 5.2V)
-        //Battery level is connected to the RAW pin on Arduino and is fed through two 5% resistors:
-        //3.9K on the high side (R1), and 1K on the low side (R2)
-        float get_battery_level()
-        {
-          return 0.00;
-        }
-
-
-
-        //Reports the weather string to the serial interface
-        void reportWeather()
-        {
-          calcWeather(); //Go calc all the various sensors
-
-          Serial.print("$,wind_dir=");
-          Serial.print(wind_dir);
-          Serial.print(",wind_speed=");
-          Serial.print(windspeed, 1);
-          Serial.print(",wind_gust=");
-          Serial.print(windgust, 1);
-          Serial.print(",windgustdir=");
-          Serial.print(windgustdir);
-          Serial.print(",windspd_avg2m=");
-          Serial.print(windspd_avg2m, 1);
-          Serial.print(",wind_dir_avg2m=");
-          Serial.print(wind_dir_avg2m);
-          Serial.print(",windgust_10m=");
-          Serial.print(windgustkmh_10m, 1);
-          Serial.print(",windgustdir_10m=");
-          Serial.print(windgustdir_10m);
-          Serial.print(",humidity=");
-          Serial.print(humidity, 1);
-          Serial.print(",temp=");
-          Serial.print(tempc, 1);
-          Serial.print(",rain_1h=");
-          Serial.print(rain_1h, 2);
-          Serial.print(",rain_today=");
-          Serial.print(rain_today, 2);
-          Serial.print(",rain_since_last=");
-          Serial.print(rain_since_last, 2);
-          rain_since_last = 0; //reset this straight away to minimse interrupts causing missed drops
-          Serial.print(",uncorrected_pressure=");  //Will be calculated in agent
-          Serial.print(pressure, 2);
-          Serial.print(",batt_lvl=");
-          Serial.print(batt_lvl, 2);
-          Serial.print(",light_lvl=");
-          Serial.print(light_lvl, 2);
-          Serial.print(",");
-          Serial.println("#,");
-
-          //Test string
-          //Serial.println("$,wind_dir=270,windspeed=0.0,windgust=0.0,windgustdir=0,windspd_avg2m=0.0,wind_dir_avg2m=12,windgustwindgust_10m=0.0,windgustdir_10m=0,humidity=998.0,tempc=-1766.2,rain_1h=0.00,rain_today=0.00,-999.00,batt_lvl=16.11,light_lvl=3.32,#,");
-        }
-
- rc = strncmp(msg, "HELLO----", LLAP_MESSAGE_SIZE);
-    if (rc == 0)
-    {
-      ;    // just echo the message back
-    }
-    else
-    {
-      rc = strncmp(msg, "FVER-----", LLAP_MESSAGE_SIZE);
-      if (rc == 0)
-      {
-        strlcpy(reply,"FVER",LLAP_MESSAGE_SIZE);
-        strncat(reply, VERSION, LLAP_MESSAGE_SIZE);
-      }
-      else
-      {
-        rc = strcmp(msg, "DEVTYPE--");
-        if (rc == 0)
-        {
-          strlcpy(reply,"DEVTYPE",LLAP_MESSAGE_SIZE);
-          strncat( reply, DEVICETYPE, LLAP_MESSAGE_SIZE);
-        }
-        else
-        {
-          rc = strncmp(msg, "SAVE-----", LLAP_MESSAGE_SIZE);
-          if (rc == 0)
-          {
-            EEPROM.write(EEPROM_DEVICEID1, LLAP.deviceId[0]);    // save the device ID
-            EEPROM.write(EEPROM_DEVICEID2, LLAP.deviceId[1]);    // save the device ID
-          }
-          //------- OK that's the basic protocol over - move on to processing the weather...
-          else
-          {
-            rc = strncmp(msg, "TEMP-----", LLAP_MESSAGE_SIZE);
-            if (rc == 0)
-            {
-              getTemperature(reply);
-            }
-            else
-            {
-              rc = strncmp(msg, "HUM------", LLAP_MESSAGE_SIZE);
-              if (rc == 0)
-              {
- //             getHumidity();
-              }
-              else
-              {
-                rc = strncmp(msg, "RAIN1H---", LLAP_MESSAGE_SIZE);
-                if (rc == 0)
-                {
- //               getRain1H ();
-                }
-                else
-                {
-                  rc = strncmp(msg, "RAIND----", LLAP_MESSAGE_SIZE);
-                  if (rc == 0)
-                  {
-//                  getRainToday();
-                  }
-                  else
-                  {
-                    rc = strncmp(msg, "RAINSI---", LLAP_MESSAGE_SIZE);
-                    if (rc == 0)
-                    {
-//                    getRainSince ();
-                      // Note this is deprecated
-                    }
-                    //---------------------------------------------------- Wind ------------------------------------
-                    else
-                    {
-                      rc = strncmp(msg, "WDSP-----", LLAP_MESSAGE_SIZE);
-                      if (rc == 0)
-                      {
-//                      getWindSpeed ();
-                      }
-                      else
-                      {
-                        rc = strncmp(msg, "WDDI-----", LLAP_MESSAGE_SIZE);
-                        if (rc == 0)
-                        {
-//                        getWindDirection ();
-                        }
-                        else
-                        {
-                          rc = strncmp(msg, "WDGU-----", LLAP_MESSAGE_SIZE);
-                          if (rc == 0)
-                          {
-//                          getWindGust ();
-                          }
-                          else
-                          {
-                            rc = strncmp(msg, "WDGUD----", LLAP_MESSAGE_SIZE);
-                            if (rc == 0)
-                            {
-//                            getWindGustDirection();
-                            }
-                            else
-                            {
-                              rc = strncmp(msg, "WDSP2----", LLAP_MESSAGE_SIZE);
-                              if (rc == 0)
-                              {
-//                              getWindSpeed2mins();
-                              }
-                              else
-                              {
-                                rc = strncmp(msg, "WDDI2----", LLAP_MESSAGE_SIZE);
-                                if (rc == 0)
-                                {
-//                                getWindDirection2mins ();
-                                }
-                                else
-                                {
-                                  rc = strncmp(msg, "WDGU10---", LLAP_MESSAGE_SIZE);
-                                  if (rc == 0)
-                                  {
-//                                  getWindGust10mins ();
-                                  }
-                                  else
-                                  {
-                                    rc = strncmp(msg, "WDGUD10--", LLAP_MESSAGE_SIZE);
-                                    if (rc == 0)
-                                    {
-//                                    getWindGustDirection10mins ();
-                                    }
-                                    //---------------------------------------------------- Pressure  ------------------------------------
-                                    else
-                                    {
-                                      rc = strncmp(msg, "BAR------", LLAP_MESSAGE_SIZE);
-                                      if (rc == 0)
-                                      {
-//                                      getBarometric ();
-                                      }
-                                      else
-                                      {
-
-                                        //---------------------------------------------------- Extras  ------------------------------------
-                                        rc = strncmp(msg, "LIGHT----", LLAP_MESSAGE_SIZE);
-                                        if (rc == 0)
-                                        {
-//                                        getLight ();
-                                        }
-                                        else
-                                        {
-                                          rc = strncmp(msg, "BATT-----", LLAP_MESSAGE_SIZE);
-                                          if (rc == 0)
-                                          {
-//                                          getBattery();
-                                          }
-                                          else
-                                          {
-                                            rc = strncmp(msg, "MIDNIGHT-", LLAP_MESSAGE_SIZE);
-                                            if (rc == 0)
-                                            {
-                                              midnightReset();
-                                            }
-                                            else
-                                            {
-                                              strcpy (reply,"ERROR....");
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-#endif
