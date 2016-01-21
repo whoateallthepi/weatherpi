@@ -1,0 +1,120 @@
+Setup from scrathc - Weather Pi
+
+sudo apt-get update
+sudo apt-get upgrade
+
+to install
+sqlite3 
+sudo apt-get install python3-rpi.gpio (check latest!)
+
+
+slice of radio setup 
+http://openmicros.org/index.php/articles/94-ciseco-product-documentation/raspberry-pi/283-setting-up-my-raspberry-pi
+
+Disable serial port login
+sudo nano /etc/inittab
+Comment out thus line (#)
+T0:23:respawn:/sbin/getty -L ttyAMA0 115200 vt100
+
+B) - Disable Bootup Info
+sudo nano leafpad /boot/cmdline.txt
+You need to remove all references to ttyAMA0 
+dwc_otg.lpm_enable=0 console=tty1 root=/dev/mmcblk0p2 rootfstype=ext4 elevator=deadline rootwait
+
+Worth installing minicom:
+sudo apt-get install minicom
+
+ls -l /dev/ttyAMA0 
+minicom -b 9600 -o -D /dev/ttyAMA0 ctrl A x
+
+A) - Add the pi user to the dialout group
+
+In LXTerminal, type:
+
+sudo usermod -a -G dialout pi
+
+
+
+Check ssh is working  
+ssh pi@ipaddr (get this with ip addr)
+
+Get the EA drivers - create a directory (weather)
+
+ swithch to it then https://github.com/embeddedartists/gratis.git
+
+cd gratis/PlatformWithOS/RaspberryPi
+ mv epd_io.h epd_io.h.original
+mv epd_io_free_uart.h epd_io.h
+
+Then follow instructions in PlatformWithOS.readme.md
+from this directory call 
+sudo modprobe spi-bcm2708
+COG_VERSION=V2 make rpi-epd_test
+sudo ./driver-common/epd_test 2.7
+The test should display some images if everything is wired correctly
+Ctrl C when you get bored and set up the Fuse service...
+COG_VERSION=V2 make rpi-epd_fuse
+sudo modprobe spi-bcm2708
+sudo mkdir /tmp/epd
+sudo ./driver-common/epd_fuse --panel=2.7 -o allow_other -o default_permissions /tmp/epd
+
+check by cat /tmp/epd/version
+cat /tmp/epd/panel
+
+./driver-common/xbm2bin < ./driver-common/cat_2_7.xbm > /tmp/epd/display
+echo U > /tmp/epd/command (Image of a cat..)
+
+Set to start at boot
+sudo COG_VERSION=V2 make rpi-install
+
+sudo service epd-fuse start
+ls -l /dev/epd
+
+Get started on Python..
+sudo apt-get install python-imaging
+python demo/DrawDemo.py
+
+Pretty unispiring - but it all works.... (but it is Python 2...)
+
+cd to your install directory (weather) you need to install Python 3.x versions of the EPD module - copy mine!
+
+cd /media
+umount /media/A2D1-A9F3
+
+sudo mkdir /media/sandisk
+ 
+
+Nov  7 14:29:03 raspberrypi kernel: [164934.820511]  sda: sda1
+Nov  7 14:29:03 raspberrypi kernel: [164934.824348] sd 1:0:0:0: [sda] Attached SCSI removable disk
+(from tail -f /var/log/messages
+
+sudo mount -t vfat -o uid=pi,gid=pi /dev/sda1 /media/usbstick/
+
+sqlite3 /media/SANDISK/weather.db
+CREATE TABLE 'station' ('id' INTEGER PRIMARY KEY autoincrement,'name' varchar(20) NOT NULL, 'latitude' decimal(9,6), 'longitude' decimal (9,6), 'altitude' int(5));
+
+ create table reading ( time DATETIME DEFAULT CURRENT_TIMESTAMP, station_id int, wind_dir int(3), wind_speed decimal(4,1), wind_gust decimal (4,1), wind_gust_dir int(3), wind_speed_avg2m decimal (4,1), wind_dir_avg2m int (3), wind_gust_10m decimal (4,1), wind_gust_dir_10m int(3), humidity decimal (4,1), temperature decimal (3,1), rain_1h decimal (6,2), rain_today decimal (6,2), rain_since_last decimal (6,2), bar_uncorrected float, bar_corrected decimal (5,1), battery decimal (4,2), light decimal (4,2), FOREIGN KEY (station_id) references station(id));
+
+CREATE INDEX reading_index ON reading (time);
+
+
+ insert into station (id, name, latitude, longitude, altitude) values(1, 'Blackheath Test', 0.00, 0.00, 25);
+.quit
+
+
+sudo apt-get install mtools (leave out)
+
+
+sudo apt-get install python3-pip
+sudo pip-3.2 install Pillow
+
+
+network={
+        ssid="tcnews"
+        psk=""
+        proto=RSN
+        key_mgmt=WPA-PSK
+        pairwise=CCMP
+        auth_alg=OPEN
+}
+sudo nano /etc/wpa_supplicant/wpa_supplicant.conf
