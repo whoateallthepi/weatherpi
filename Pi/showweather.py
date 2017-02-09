@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+#
+# 1.01 6-Jun-2016 Temporary fix to amend default station id to 2
+#
 import sys
 import os
 import RPi.GPIO as GPIO
@@ -13,7 +16,7 @@ import logging
 import socket
 import sqlite3
 
-proc_name = 'showweather.py 1.00'
+proc_name = 'showweather.py 1.01'
 
 
 # Used to control cycling through the screens on button 1 
@@ -31,8 +34,8 @@ BLACK = 0
 parser = argparse.ArgumentParser()
 parser.add_argument("--debug", help="Logs messages to the console as well as the log file",
                     action="store_true")
-parser.add_argument("--station", help="Id of the station - default is '1'",
-                    default='1')
+parser.add_argument("--station", help="Id of the station - default is '2'",
+                    default='2')
 parser.add_argument("--logfile", help="Location of log file - defauits to /var/log/weather.log",
                     default = "/var/log/weather.log")
 parser.add_argument("--log", help="log level - suggest <info> when it is working",
@@ -61,7 +64,7 @@ logging.basicConfig(
     filename=args.logfile,
     level=numeric_level)
 
-logger = logging.getLogger('showweather.py 1.00')
+logger = logging.getLogger('showweather.py 1.01')
 
 if args.debug:
     console_handler = logging.StreamHandler()
@@ -314,7 +317,7 @@ def build_weather_screen(weather_data, trend):
     draw.rectangle((0, 0, width, height), fill=WHITE, outline=WHITE)
     
     # Move single digit temperatures across screen
-    if -10 < weather_data["temperature"] < 10:
+    if 0 < weather_data["temperature"] < 10:
         temp_line = ' {t:-0.1f}'.format(t=weather_data["temperature"])
     else:
         temp_line = '{t:-0.1f}'.format(t=weather_data["temperature"]) # + u"\u00B0"
@@ -383,9 +386,9 @@ def build_weather_screen(weather_data, trend):
 
     # draw a minus sign for sub-zero!
     
-    if weather_data ["temperature"] < 0:
-        sign_font = ImageFont.truetype(FONT_FILE, FREEZE_SIZE)
-        draw.text((FREEZE_X, FREEZE_Y), '-', fill=BLACK, font=sign_font) 
+#    if weather_data ["temperature"] < 0:
+#       sign_font = ImageFont.truetype(FONT_FILE, FREEZE_SIZE)
+#      draw.text((FREEZE_X, FREEZE_Y), '-', fill=BLACK, font=sign_font) 
 
    # Add station name to top of screen
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3 
+# 1.01 06-Jun-2016 Amended to make default station 2 - temporary fix!
+#
 import serial
 import sqlite3
 import re
@@ -21,8 +23,8 @@ parser.add_argument("--power_saving", help="Power off the remote radio to save p
 
 parser.add_argument("--prompt", help="Prompt for data collection rather than the loop",
                     action="store_true")
-parser.add_argument("--station", help="Id of the station - default is '01'",
-                    default='1')
+parser.add_argument("--station", help="Id of the station - default is '02'",
+                    default='2')
 
 parser.add_argument("--tries", help="Try the serial interface this many times before quitting",
                     type=int,
@@ -56,7 +58,7 @@ logging.basicConfig(
     filename=args.log_file,
     level=numeric_level)
 
-logger = logging.getLogger('getweather.py 1.00')
+logger = logging.getLogger('getweather.py 1.01')
 
 if args.debug:
     console_handler = logging.StreamHandler()
